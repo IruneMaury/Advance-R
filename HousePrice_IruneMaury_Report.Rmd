@@ -1,0 +1,633 @@
+---
+title: "House Price Prediction"
+author: "Irune Maury"
+date: "23/05/2019"
+output: html_document
+---
+***
+
+## House Price Prediction
+The House Price Prediction project below, shows the use of different machine learning techniques in order to analyze the data available and finally predict the future values of prices using regression models.
+
+With an initial Data Exploratory Analysis, the data will be analyzed to see the main characteristics of the dataset and any relations between the target variable and the independent ones. Also, location analysis will give a sense of where was this data recorded. This EDA process will lead to a Feature Engineering phase were data will be cleaned and transformed so it is ready to be the input of the different models to be tested.
+
+Finally, the data will be splitted in order to have a train and test set. Also, evaluation metrics will be defined and four different regression techniques will be applied in order to evaluate results and pick the best model to generate predictions with the test sample. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages Loaded
+For loading the data and initial conversion to a dataframe, the exploratory data analysis with some graphs so this stage is more visual and even the building of the models, R gives all necessary libraries such as **data.table**, **ggplot2**, **MASS**, **randomForest**, among others.  
+
+A list of libraries will be installed and then called in order to be used through the project. 
+```{r Load and Install Packages, echo = FALSE, include = FALSE, results='hide', warning = FALSE}
+packages_list <- c('data.table','lubridate','gridExtra','ggthemes','ggrepel','ggmap',
+                   'ggiraph','plotly','corrplot','geosphere','caret','scales','dplyr',
+                   'devtools','fBasics','forecast','ggfortify','randomForest','rpart',
+                   'partykit','rpart.plot','glmnet','MASS','xgboost','ranger','kableExtra',
+                   'ggplot2', 'dichromat', 'leaflet', 'GGally','DT','tidyverse',
+                   'hydroGOF', 'miscTools','reshape2', 'mltools', 'outliers'
+)
+
+for (i in packages_list){
+  if(!i%in%installed.packages()){
+    install.packages(i, dependencies = TRUE, repos = "http://cran.us.r-project.org")
+    library(i, character.only = TRUE)
+    print(paste0(i, ' has been installed'))
+  } else {
+    print(paste0(i, ' is already installed'))
+    library(i, character.only = TRUE)
+  }
+}
+```
+
+## Data Loading and Initial Preparation
+Two CSV files were given in order to complete the project: **house_price_train.csv** and **house_price_test.csv**
+
+### Train
+```{r Data Loading Train, warning = FALSE}
+train_data<-fread('house_price_train.csv', stringsAsFactors = F)
+
+cat('The Dimensions of the Train set are: ', dim(train_data))
+str(train_data)
+summary(train_data)
+head(train_data,3)
+
+train_data$id <- NULL
+price <- train_data$price
+train_data$price <- NULL
+train_data$price <- price
+```
+
+### Test
+```{r Data Loading Test, warning = FALSE}
+test_data<-fread('house_price_test.csv', stringsAsFactors = F)
+cat('The Dimensions of the Train set are: ', dim(test_data))
+str(test_data)
+head(test_data,3)
+test_labels <- test_data$id
+test_data$id <- NULL
+```
+
+
+## EDA - Basic Exploration
+### Missing Values and Duplicated Rows
+The first step is to check if the datasets contain missing values in order to remove them. Also, duplicated rows will be analyzed in order to remove them. 
+```{r EDA Basic Exploration, echo=FALSE, warning = FALSE}
+##### ** MISSING DATA ** #####
+#TRAIN
+cat("The number of missing values on TRAIN are", sum(is.na(train_data)) / (nrow(train_data) *ncol(train_data)))
+
+#TEST
+cat("The number of missing values on TRAIN are", sum(is.na(test_data)) / (nrow(test_data) *ncol(test_data)))
+
+##### ** DUPLICATED ROWS ** #####
+cat("The number of duplicated rows on TRAIN are", nrow(train_data) - nrow(unique(train_data)))
+cat("The number of duplicated rows on TEST are", nrow(test_data) - nrow(unique(test_data)))
+```
+As both datasets do not have any missing values or duplicated rows, the next step is to analyze the data with basic data visualization plots. 
+
+### Target Variable
+The target variable that we want to predict is **Price** so first a summary of the continuous variable and distribution plot will give initial description. 
+```{r EDA - Target Variable, echo=FALSE, warning = FALSE}
+summary(train_data$price)
+
+ggplot(train_data, aes(x=price)) +
+  geom_histogram(fill="#00AFBB", binwidth = 10000) + theme_minimal() +
+  ggtitle("Target Variable (Price)") +
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank()) +
+  scale_x_continuous(breaks= seq(0, 5000000, by=1000000),labels = scales::comma)
+```
+
+
+Looking at the graph, the target variable distribution is right-skewed and even some outliers are detected. 
+
+### Location Analysis
+Having the coordinates of each house (longitude and latitude) a visual representation were built in order to see where is this data coming from (Seattle) and even separated in different clusters based on price ranges. 
+```{r EDA - Map, echo=FALSE, warning = FALSE}
+set.seed(1)
+priceclustering <- train_data$price
+model_c <- kmeans(priceclustering, centers = 5)
+clust <- model_c$cluster
+price_cluster <- mutate(train_data, cluster = clust)
+
+price_index <- function(p){
+  for(i in 1:nrow(p)){
+    if(p[i,"cluster"] == 1){
+      p[i,"index"] = '75,000 - 400,000'
+    } else if(p[i,"cluster"] == 5) {
+      p[i,"index"] = '400,001 - 700,000'
+    } else if(p[i,"cluster"] == 3){
+      p[i,"index"] = '700,001 - 1,200,000'
+    } else if(p[i,"cluster"] == 2){
+      p[i,"index"] = '1,200,001 - 2,200,000'
+    } else {
+      p[i,"index"] = '2,200,001 - 7,700,000'
+    }    
+  }
+  return(p)
+}
+
+price_map <- price_index(price_cluster)
+price_map$index <- as.factor(price_map$index)
+
+h1 <- price_map[price_map$cluster == 1,]
+h2 <- price_map[price_map$cluster == 2,]
+h3 <- price_map[price_map$cluster == 3,]
+h4 <- price_map[price_map$cluster == 4,]
+h5 <- price_map[price_map$cluster == 5,]
+
+   
+pal <- colorFactor(palette = c("turquoise3", "slateblue1", "violetred4", "royalblue4", "orange1"), 
+                   levels = c('75,000 - 400,000','400,001 - 700,000','700,001 - 1,200,000',
+                              '1,200,001 - 2,200,000','2,200,001 - 7,700,000'))
+
+leaflet(options = leafletOptions(minZoom = 9, dragging = TRUE)) %>% 
+  addProviderTiles(provider = 'CartoDB')%>%
+  addCircleMarkers(data = h1, radius = 1, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Lot area (sqft): ", sqft_lot15),
+                   color = ~pal(index),  group = '75,000 - 400,000') %>%
+  addCircleMarkers(data = h2, radius = 1, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Lot area (sqft): ", sqft_lot15),
+                   color = ~pal(index),  group = '400,001 - 700,000') %>%
+  addCircleMarkers(data = h3, radius = 1, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Lot area (sqft): ", sqft_lot15),
+                   color = ~pal(index),  group = '700,001 - 1,200,000') %>%
+  addCircleMarkers(data = h4, radius = 1, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Lot area (sqft): ", sqft_lot15),
+                   color = ~pal(index),  group = '1,200,001 - 2,200,000') %>%
+  addCircleMarkers(data = h5, radius = 1, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Lot area (sqft): ", sqft_lot15),
+                   color = ~pal(index),  group = '2,200,001 - 7,700,000') %>%
+  setView(lng = -122.001008, lat = 47.474443, zoom = 11) %>%
+  addLegend(pal = pal, 
+            values = c('75,000 - 400,000','400,001 - 700,000','700,001 - 1,200,000',
+                       '1,200,001 - 2,200,000','2,200,001 - 7,700,000'),
+            opacity = 0.5, title = "Price Range", position = "bottomright") %>%
+  addLayersControl(overlayGroups = c('75,000 - 400,000','400,001 - 700,000','700,001 - 1,200,000',
+                                     '1,200,001 - 2,200,000','2,200,001 - 7,700,000'), position = "bottomleft")
+
+```
+
+### Evolution of Prices Over Time 
+One of the main analysis is to understand the evolution of prices over the years and even how many houses were built so we can see more relations between time or some specific events that could even impact.
+
+The data available is from 2014 and 2015. So looking at the first time series plot, the prices for this two years are not stationary meaning that there could be a relation that explains the future with past data so with regression future prices could be predicted.
+```{r EDA - Time Series Analysis (Price Over Time), echo=FALSE, warning = FALSE}
+#TIME SERIES 
+ts <- train_data[,c('date', 'price')]
+ts$date <- mdy(ts$date)
+ts <- dplyr::arrange(ts, date)
+
+ggplot(data = ts, aes(x = date, y = price))+
+  geom_line(color = "#00AFBB")+ theme_minimal() +
+  ggtitle("Price Over Time") +
+  theme(panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank())
+```
+
+The dataset contains all the data from each house bought such as the year when it was built so using this information, two different plots will show how prices change over the years when houses were built and how many houses were sold. The curve shows how prices started to decay and then they grew back again this could be due to specific events on the 60's such as the Cold War. 
+```{r EDA - Time Series Analysis (Price Over Time) Part II, echo=FALSE, warning = FALSE}
+ggplot(train_data, aes(yr_built, price)) +
+  geom_smooth(se = FALSE, colour = "#00AFBB") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
+  theme_minimal() +
+  ggtitle("House Prices Over the Years") +
+  theme(text = element_text(face = "bold"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 45),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),)
+
+ggplot(train_data, aes(yr_built)) +
+  geom_bar(fill = "#00AFBB") +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10), expand = c(0,0)) +
+  ggtitle("Houses Built Per Year") +
+  theme_minimal() +
+  theme(text = element_text(face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+```
+
+### Discrete Variables Distribution
+The datasets have all numerical variables except for the date so in order to see the distributions in a clearer way, the data variables were splitted between **discrete** and **continuous** variables so different types of chart could be used (bar charts or density charts)
+```{r EDA - Discrete Variables Distribution, echo=FALSE, warning = FALSE}
+dfplot <- train_data[,c('bedrooms', 'bathrooms', 'floors', 'waterfront', 'view', 'condition', 'grade')]
+dfplot <- sapply(dfplot, as.factor)
+dfplot <- as.data.frame(melt(dfplot))
+dfplot$value <- factor(dfplot$value, levels=sort(as.numeric(levels(dfplot$value))), ordered=TRUE)
+
+options(repr.plot.width = 16, repr.plot.height = 6)
+
+ggplot(dfplot, aes(value)) +
+  geom_bar(aes(fill = Var2)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  scale_x_discrete(expand = c(0,0)) +
+  facet_wrap(~Var2, scales = "free", nrow = 3) +
+  scale_fill_tableau() +
+  labs(fill = "", x = "", y = "") +
+  theme_minimal() +
+  theme(text = element_text(face = "bold"),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 0),
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank()) 
+```
+
+### Continuous Variables Distribution
+```{r EDA - Continuous Variables Distribution, echo=FALSE, warning = FALSE}
+dfplot2 <- train_data[,c('sqft_living', 'sqft_lot', 'sqft_above', 'sqft_basement', 'sqft_living15', 'sqft_lot15')]
+dfplot2 <- as.data.frame(melt(dfplot2))
+
+ggplot(dfplot2, aes(value)) +
+  geom_density(aes(fill = variable)) +
+  facet_wrap(~variable, scales = "free") +
+  labs(x = "", y = "", fill = "") +
+  theme_minimal() +
+  scale_fill_tableau() +
+  theme(text = element_text(face = "bold"),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 90),
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank())
+```
+Most of the distribution are skewed to the right.
+
+### Relation Between Target Variable and Few Independent Variables 
+```{r EDA - Relation Between Target Variable and Few Independent Variables Part I, echo=FALSE, warning = FALSE}
+ggplot(train_data, aes(x=sqft_living, y=price))+ theme_minimal() +
+  geom_point(col='#00AFBB') + scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma) +
+  ggtitle("Size of Living Room vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+ggplot(train_data, aes(x=factor(grade), y=price))+
+  geom_boxplot(col='#00AFBB') + labs(x='Grade') + theme_minimal() +
+  ggtitle("Grade vs Price") +
+  scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+```
+As price is plotted against other independent variables, outliers and even how they could be related will give initial insights for next feature engineering phase.
+
+```{r EDA - Relation Between Target Variable and Few Independent Variables Part II, echo=FALSE, warning = FALSE}
+ggplot(train_data, aes(x=bathrooms, y=price))+ theme_minimal() +
+  geom_point(col='#00AFBB') + scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma)+
+  ggtitle("Bathrooms vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+  
+ggplot(train_data, aes(x=sqft_above, y=price))+ theme_minimal() +
+  geom_point(col='#00AFBB') + scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma)+
+  ggtitle("Sqft_above vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r EDA - Relation Between Target Variable and Few Independent Variables Part III, echo=FALSE, warning = FALSE}
+ggplot(train_data, aes(x=sqft_living15, y=price))+ theme_minimal() +
+  geom_point(col='#00AFBB') + scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma)+
+  ggtitle("Sqft_living15 vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+ggplot(train_data, aes(x=floors, y=price))+ theme_minimal() +
+  geom_point(col='#00AFBB') + 
+  scale_y_continuous(breaks= seq(0, 8000000, by=1000000), labels = scales::comma)+
+  ggtitle("Floors vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+ggplot(train_data, aes(x=as.factor(bedrooms), y=price)) +
+  geom_bar(stat='summary', fun.y = "median", fill='#00AFBB') + theme_minimal() +
+  scale_y_continuous(labels = scales::comma)+
+  ggtitle("Bedrooms vs Price") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+```
+With the above graphs outliers are clearly detected and some correlation between the variables may be detected but this will be checked on next steps with the proper correlation analysis. 
+
+## Correlation Analysis
+A general correlation plot looking at all the variables against the target and each other. Even a small correlation plot only with high correlations will help to understand better which variables are more correlated and how to treat them later. 
+```{r Correlation, echo=FALSE, warning = FALSE}
+temp <- train_data
+temp$date <- NULL
+corr <- cor(temp)
+corrplot.mixed(corr, tl.col="black", tl.pos = "lt", tl.offset = 0.1, number.cex= 0.7)
+
+#HIGH CORRELATIONS IN DETAIL
+cor_aux <- cor(temp, use="pairwise.complete.obs")
+cor_sorted <- as.matrix(sort(cor_aux[,'price'], decreasing = TRUE))
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+cor_aux <- cor_aux[CorHigh, CorHigh]
+corrplot.mixed(cor_aux, tl.col="black", tl.pos = "lt")
+```
+
+
+Highly correlated variables are considered to be does that have a coefficient higher than 0.80 but in this a threshold of 0.5 were used. 
+
+## Feature Engineering
+### Datasets Combination
+Both train and test datasets provided will be combined in order to apply some feature engineering.
+
+Also, a new variables **'isTrain'** will help to split it again based on how they were given. 
+```{r Feature Engineering Part I, warning = FALSE}
+train <- train_data
+test <- test_data
+test$price <- NA
+
+str(train)
+str(test)
+
+train$isTrain <- 1
+test$isTrain <- 0
+
+house_base <- rbind(train,test)
+str(house_base)
+```
+
+### Feature Creation
+New variables were created such as the **Age** of a house or if it was or not renovated. Finally, some features as date, latitude and longitude will not be used as input for the models. As some high correlations appeared, sqft_above will be dropped too having a coefficient of 0.88 with sqft_living
+
+```{r Feature Engineering Part II, warning = FALSE}
+##### **NEW FEATURES** #####
+library(lubridate)
+house_base$houseAge <- year(Sys.time()) - house_base$yr_built
+house_base$renovated <- ifelse(house_base$yr_renovated == 0, 0, 1)
+#house_base[, c('date','sqft_above', 'latitude', 'longitude'):=NULL]
+house_base[ ,c('date','sqft_above', 'lat', 'long')] <- list(NULL)
+str(house_base)
+head(house_base,3)
+```
+
+### Data Normalization and Outliers Treatment
+All data was centered and scaled in order to apply all models in the next stage.
+
+Outliers will be kept in this case, but for next steps or future improvements of the model they could be removed. 
+
+So the final dataset, ready to be used for modeling is: 
+```{r Feature Engineering Part III, warning = FALSE}
+price <- house_base$price
+isTrain <- house_base$isTrain
+renovated <- house_base$renovated
+yr_renovated <- house_base$yr_renovated
+yr_built <- house_base$yr_built
+zipcode <- house_base$zipcode
+house_base[, c('price', 'isTrain','renovated', 'zipcode', 'yr_renovated','yr_built'):=NULL]
+
+#NORMALIZING
+num <- preProcess(house_base, method=c("center", "scale"))
+
+house_base <- predict(num, house_base)
+house_final <- cbind(house_base,renovated, zipcode, yr_built, yr_renovated, isTrain, price)
+
+str(house_final)
+summary(house_final)
+```
+
+## Data Splitting (Train - Test Sets)
+After splitting the **house_base** dataset into train and test, again both have the same number of rows and are ready to be used. 
+```{r Data Splitting, warning = FALSE}
+train_model <- house_final[house_final$isTrain==1,]
+test_model <- house_final[house_final$isTrain==0,]
+smp_size <- floor(0.75 * nrow(train_model))
+
+set.seed(123)
+train_ind <- sample(seq_len(nrow(train_model)), size = smp_size)
+
+train_new <- train_model[train_ind, ]
+test_new <- train_model[-train_ind, ]
+nrow(train_new)
+nrow(test_new)
+
+train_new$isTrain <- NULL
+test_new$isTrain <- NULL
+```
+
+## Modeling 
+After applying each model, a formula is set to be used in each as we want to predict the prices against all the rest of the independent variables. 
+
+Also, some metrics are defined and will be used to evaluate the outcome of each model and do a final evaluation to pick the best. 
+```{r Modeling Basics, warning = FALSE}
+#### FORMULA
+formula<-as.formula(price~.) 
+
+#METRICS
+mape<-function(real,predicted){return(mean(abs((real-predicted)/real)))}
+mae<-function(real,predicted){return(mean(abs(real-predicted)))}
+rmse<-function(real,predicted){return(sqrt(mean((real-predicted)^2)))}
+```
+
+
+## Regression with Regularization 
+```{r Regression with Regularization, echo=FALSE, warning = FALSE}
+lasso_cv<-cv.glmnet(x = data.matrix(train_new[, !'price']),
+                     nfolds = 5,
+                     y = train_new[['price']],
+                     alpha=1,
+                     family = 'gaussian',
+                     standardize = T)
+
+lasso<-glmnet(x = data.matrix(train_new[, !'price']), 
+                 y = train_new[['price']],
+                 family = 'gaussian',
+                 alpha=1, lambda = lasso_cv$lambda.min)
+
+lasso
+lasso$beta
+
+test_lasso<-predict(lasso, newx = as.matrix(test_new[, !'price']))
+df_predicted<-test_new[, .(id=1:.N,price, test_lasso)]
+
+ggplot(melt(df_predicted, id.vars = 'id'), aes(x=id,y=value, colour=variable))+
+  geom_point(alpha=0.65)+geom_line(alpha=0.65)+
+  xlab('')+ylab('Price ($)')+
+  ggtitle('Lasso Regression')+ theme_minimal() +
+  scale_colour_manual(values = c("black","turquoise3"))+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+
+rmse_lasso<-rmse(real=test_new$price, predicted = test_lasso)
+mae_lasso<-mae(real=test_new$price, predicted = test_lasso)
+mape_lasso<-mape(real=test_new$price, predicted = test_lasso)
+metrics_lasso <- matrix(c(rmse_lasso,mae_lasso,round(mape_lasso*100,1)),ncol=3,byrow=TRUE)
+colnames(metrics_lasso) <- c("RMSE","MAE","MAPE")
+metrics_lasso
+```
+
+
+## Random Forest 
+```{r Random Forest, echo=FALSE, warning = FALSE}
+rf<-ranger(formula, train_new)
+test_rf<-predict(rf,test_new)$predictions
+
+df_predicted<-cbind(df_predicted, test_rf)
+
+ggplot(melt(df_predicted, id.vars = 'id'), aes(x=id,y=value, colour=variable))+
+  geom_point(alpha=0.65)+geom_line(alpha=0.65)+
+  xlab('')+ylab('Price ($)')+
+  ggtitle('Random Forest')+ theme_minimal()+
+  scale_colour_manual(values = c("black","turquoise3", "slateblue1"))+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+
+rmse_rf<-rmse(real=test_new$price, predicted = test_rf)
+mae_rf<-mae(real=test_new$price, predicted = test_rf)
+mape_rf<-mape(real=test_new$price, predicted = test_rf)
+metrics_rf <- matrix(c(rmse_rf,mae_rf,round(mape_rf*100,1)),ncol=3,byrow=TRUE)
+colnames(metrics_rf) <- c("RMSE","MAE","MAPE")
+metrics_rf
+```
+
+
+## Regression With Feature Selection (Stepwise)
+```{r Regression with Feature Selection, echo=FALSE, warning = FALSE}
+lm<-stepAIC(lm(formula = formula, 
+                 data=train_new),
+              trace=F)
+
+summary(lm)
+
+test_lm<-predict(lm, newdata = test_new)
+
+df_predicted<-cbind(df_predicted, test_lm)
+
+ggplot(melt(df_predicted, id.vars = 'id'), aes(x=id,y=value, colour=variable))+
+  geom_point(alpha=0.65)+geom_line(alpha=0.65)+
+  xlab('')+ylab('Price ($)')+
+  ggtitle('Linear Regression with Feature Selection')+ theme_minimal()+
+  scale_colour_manual(values = c("black","turquoise3", "slateblue1", "violetred4"))+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+
+rmse_lm<-rmse(real=test_new$price, predicted = test_lm)
+mae_lm<-mae(real=test_new$price, predicted = test_lm)
+mape_lm<-mape(real=test_new$price, predicted = test_lm)
+metrics_lm <- matrix(c(rmse_lm,mae_lm,round(mape_lm*100,1)),ncol=3,byrow=TRUE)
+colnames(metrics_lm) <- c("RMSE","MAE","MAPE")
+metrics_lm
+
+```
+
+## XGBoosting Tree 
+```{r XGBoosting Tree, echo=FALSE, warning = FALSE}
+xgb<-xgboost(booster='gbtree',
+               data=as.matrix(train_new[, !'price', with=F]),
+               label=train_new$price,
+               nrounds = 60,
+               objective='reg:linear')
+
+test_xgb<-predict(xgb, newdata = as.matrix(test_new[, !'price', with=F]), type='response')
+df_predicted<-cbind(df_predicted, test_xgb)
+
+ggplot(melt(df_predicted, id.vars = 'id'), aes(x=id,y=value, colour=variable))+
+  geom_point(alpha=0.65)+geom_line(alpha=0.65)+
+  xlab('')+ylab('Price ($)')+
+  ggtitle('XGBoosted Tree')+ theme_minimal()+
+  scale_colour_manual(values = c("black","turquoise3", "slateblue1", "violetred4", "royalblue4"))+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+
+rmse_xgb<-rmse(real=test_new$price, predicted = test_xgb)
+mae_xgb<-mae(real=test_new$price, predicted = test_xgb)
+mape_xgb<-mape(real=test_new$price, predicted = test_xgb)
+metrics_xgb <- matrix(c(rmse_xgb,mae_xgb,round(mape_xgb*100,1)),ncol=3,byrow=TRUE)
+colnames(metrics_xgb) <- c("RMSE","MAE","MAPE")
+metrics_xgb
+```
+
+
+## Model Evaluation 
+The MAPE or Mean Absolute Percentage Error will be the main metric to be used  in order to compare the results. 
+```{r Model Evaluation, echo=FALSE, warning = FALSE}
+evaluation<-data.table(method=c('glmnet','rf','lm','xgb'),
+                   rmse=sapply(df_predicted[,!c('price','id')],function(x) return(rmse(real=df_predicted$price, predicted=x))),
+                   mae=sapply(df_predicted[,!c('price','id')],function(x) return(mae(real=df_predicted$price, predicted=x))),
+                   mape=sapply(df_predicted[,!c('price','id')],function(x) return(mape(real=df_predicted$price, predicted=x))))
+
+
+evaluation
+#evaluation[which.min(evaluation$mape)]
+
+# plotting results metrics
+ggplot(evaluation, aes(x=method, y=mape))+geom_bar(stat='identity', fill='#00AFBB')+ theme_minimal()+
+  ggtitle('Model Comparison by Mean Absolute Percentage Error')+
+  theme(panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank())
+
+```
+
+
+With a lower MAPE the model to be used in order to predict the house prices will be **XGBoosting Tress*
+
+## Prediction File Generation with Selected Model
+Finally, all the prices for the test_id labels will be predicted and stored in a .txt file.
+```{r Predictions File, warning = FALSE}
+pred <- data.frame(id=test_labels,price=round(df_predicted$test_xgb))
+write.table(pred,file="House_Price_Pred_1.txt",row.names=F, sep = ',')
+```
+
+## Conclusion
+House prices were predicted using a machine learning process, where the data was analyzed and presented in a visual way to get insights. Some techniques were applied to clean and transformed the data so it was splitted and used to create different models such as **Random Forest Tree**, **Lasso Regression**, **Regression with Stepwise Feature Selection** and **XGBoosting Tree** which had the lower MAPE so this was the final model used to predict the prices from the test dataset. 
+
+As future improvements on the model, outliers could be removed and parameters could me tuned in order to see if the results improve. 
