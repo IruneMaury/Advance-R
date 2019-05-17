@@ -1,0 +1,240 @@
+---
+title: "Recommendation System for Restaurant Selection"
+author: "Irune Maury Arrue"
+date: "19-03-2019"
+output:
+  html_document:
+    theme: yeti
+---
+***
+
+## Business Case: Recommendation System for Restaurant Selection
+Now-a-days, a lot of different applications are being more successful thanks to the fact that personalized recommendations are included. This make users more engaged by making their life easier. With so many restaurant options, based on different criterias that could make the decision process even more difficult and time wasting, an **application based on a recommendation system will be useful for users in order to choose a place to eat** having into consideration basic criteria such as: location, price, parking, Wi-Fi, among others preferences. 
+
+To give more details about the product or application proposed, it could be used in different devices as: smartphones, computers or tablets. It would give different restaurant options for users to pick the top number they prefer to see and with this, the best ranked places would be recommended an a decision could be made faster. The best part is that this recommendations would be made based on user preferences and others opinions which is prefered to have different options, even more for people around their social circle.A galary of different places would be presented so users can check different attributes of the places such as price ranking, location, services provided, etc. All of this with a very user-friendly interface.
+
+With different types of algorithms and the data used to desing a proposal, it is important to understand that based on user’s ratings a solution could be deliver for the particular case. Personalized recommendations are even more attractive to users and the most important thing to achieve is a good rating. With a world of applications and social media, users play a very important role from which a mutual benefit comes, for them and business (in this case restaurants) that will be more visited. It is imperative that a recommendation system is able to give the users the right places so every model should be properly trained, tested and validated so the recommended places was considered a good choice. 
+
+The business value of this proposal is that having knowledge about customers choices and preferences would help to create better marketing campaigns or customer engagement strategies could be applied in a way that the target audience would be address correctly, expecting a positive result and finally an increase of use and more profit for the restaurants. Personalizing recommendations, making customers life easier and being there just in the time needed not only increases revenue for the application's company and restaurants, but also customer experience and decision making. In a world with so many options and generalization this is a good use of predictive models, giving value to a business and its customers. 
+
+```{r Load and Install Packages, echo = FALSE, include = FALSE, results='hide', warning = FALSE}
+packages_list <- c('recommenderlab', 'Matrix', 'dplyr', 'ggplot2', 'readr')
+
+for (i in packages_list){
+  if(!i%in%installed.packages()){
+    install.packages(i, dependencies = TRUE)
+    library(i, character.only = TRUE)
+    print(paste0(i, ' has been installed'))
+  } else {
+    print(paste0(i, ' is already installed'))
+    library(i, character.only = TRUE)
+  }
+}
+```
+
+```{r Data Loading, echo=FALSE, include=FALSE, results='hide'}
+#Load of csv files
+rating_final <- read_csv("rating_final.csv")
+chefmozcuisine <- read_csv("chefmozcuisine.csv")
+geoplaces2 <- read_csv("geoplaces2.csv")
+```
+***
+
+## Data Preparation
+Three different files were used: **ratings_final.csv**, **chefmozcuisine.csv** and **geoplaces2.csv**. The main one contains the ratings (0, 1 and 2) from 138 users considering 94 different places with unique IDs as identifiers. For restaurant selection, it is important to consider other factors such as location, cuisine type, price, parking, among other; so for that reason with the two remaining files a new dataset of metadata was created too. 
+
+The rating dataset was mapped with the name of each restaurant in order to be easier for users to understand the recommendation by name and not code. The other metadata dataset called location, contains all the relevant attributes for each restaurant considered to be relevant for user future filtering: city, country, price, other_services, franchise, dress_code and smoking_area. All data colected is from Mexico.  
+
+### Data Preparation: Attributes Dataset 
+```{r Data Preparation, echo=TRUE, include=TRUE}
+#Subset with most important variables regarding the places
+location <- geoplaces2[ , c("placeID","name", "city", "country", "price", "other_services", "franchise", "dress_code", "smoking_area")]
+location$placeID <- as.character(location$placeID)
+head(location,5)
+str(location)
+```
+
+### Data Preparation: Ratings Dataset 
+```{r Data Preparation 2, echo=TRUE, include=TRUE}
+#Merging files to create the dataset with items(places to recommend), users and rating with metadata (type of place or cuisine)
+rest_p <- merge(rating_final,chefmozcuisine,by="placeID")
+rest <- merge(rest_p,location, by="placeID")
+rest$Rcuisine <- as.factor(rest$Rcuisine)
+head(rest,5)
+str(rest)
+```
+
+</br>
+
+### Ratings Distribution
+The main objective with this recommendation system is to predict the ratings that a customer would give for new restaurants or option that was not tried before. Having this as a base, it is easier and useful to give as results or just a list of the best ranked places so the customer could go and try them.
+
+Having a scale of 0,1 and 2; considered to be a 'Good Rating' is a 1 or 2, users had only three different options. Most of the results are very positive having a higher quantity of 2. 
+```{r Data Visualization, echo=TRUE, include=TRUE}
+#Histogram of ratings
+ggplot(rest, aes(x=rating)) + geom_bar(fill = "tan1") + theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),axis.title = element_blank(), axis.text.x = element_text(vjust = 0.3))+labs(title="Ratings")
+```
+</br>
+
+### Types of Cuisine Distribution
+All places on the dataset are from Mexico, so it is normal to find a lot more ratings about places where Mexican food is served. Also, bars and cafeterias are cheap and more informal options so people tend to go more, giving more ratings for this places too.  
+```{r}
+#Histogram of types of cuisine
+ggplot(rest, aes(x=Rcuisine)) + geom_bar(fill = "sienna1") + theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),axis.title = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.3))+labs(title="Types of Cuisine")
+```
+
+</br>
+
+## Ratings Matrix
+Users and places are considered the rows and columns for this specific matrix created in order to split the data and train different recommendation algorithms. The 'RealRatingMatrix'contains 138 users x 94 different restaurants.
+```{r Matrix Creation, echo=TRUE, include=TRUE, results='markup'}
+#Creating the rating matrix
+df_rest <- data.frame(user=rest$userID,item=rest$name, rating=rest$rating)
+restMatrix <- as(df_rest, "realRatingMatrix")
+colnames(restMatrix[,1:5]) #places or restaurants, the items in this case
+rownames(restMatrix[1:5,]) #users
+
+#Normalize by subtracting the row mean from all ratings in the row
+restMatrix_n <- normalize(restMatrix)
+
+#view the matrix
+m <- getRatingMatrix(restMatrix)
+m[1:5,]
+```
+
+</br>
+
+## Data Splitting for Train and Test
+To create the models, the data was splitted so an 80% would be used to train the algorithms. The rest, 20%, would be used to test and validate them. 
+```{r Matrix Splitting for Training and Testing, echo=TRUE, include=TRUE}
+#Split to train the model
+set.seed(66)
+split <- evaluationScheme(restMatrix, method = "split",train = 0.8, given = 1, goodRating = 1, k=5)
+
+train <- getData(split, "train")
+known <- getData(split, "known")
+unknown <- getData(split, "unknown")
+```
+
+</br>
+
+
+## Algorithms Comparison
+For this project, different algorithms were tested in order to evaluate the performance and finally select the best choice. Non-personalized recommendation systems such as **Popularity** and personalized as **Collaborative Filtering** or even both combined in order to check a final hybrid recommendation system, were considered. 
+
+The final set of algorithms to be tested is:
+
+* Random  
+* Popular  
+* UBCF 
+* Hybrid
+
+Each algorithm family requires a different set of parameters, which will be set and tuned by multiple functions to find the best combination. Some of these parameters are:
+
+* methods including **Cosine**,
+* **k** parameter referring to the number of neighbours to be considered while calculating the similarity values,
+* **nn** parameter referring to the neighbourhood size used by the algorithm,
+* **z-score** parameter to normalize the data.
+
+To quantify the performance of all the models, the metric used was the RMSE (Root Mean Square Error) in order to see how close the predictions are to the real case. The key is too find the most accurate model in order to have best predictions and recommend the best items for each user. When comparing different models, the lower value of RMSE indicates a better fit. This is a good measure of how accurately the models predict the ratings.  
+```{r Algorithms Comparison, echo=TRUE, include=TRUE}
+#Initial Individual Analysis to compare different algorithms 
+recRandom <- Recommender(getData(split, "train"), method = "RANDOM")
+recPopularity <- Recommender(getData(split, "train"), method = "POPULAR")
+recUBCF <- Recommender(getData(split, "train"), method = "UBCF",parameter=list(method="cosine", normalize = "Z-score", nn=25))
+recHybrid <- HybridRecommender(
+  recRandom,
+  recPopularity,
+  recUBCF,
+  weights = c(0.3,0.5,0.2)
+)
+
+rec_1 <- predict(recRandom, getData(split, "known"), type="ratings") #Random
+rec_2 <- predict(recPopularity, getData(split, "known"), type="ratings") #Popularity
+rec_3 <- predict(recUBCF, getData(split, "known"), type="ratings") #User-Based Collaborative Filtering (UBCF)
+rec_4 <- predict(recHybrid , getData(split, "known"), type="ratings")
+
+RANDOM<- calcPredictionAccuracy(rec_1, getData(split, "unknown"))
+POPULAR<- calcPredictionAccuracy(rec_2, getData(split, "unknown"))
+UBCF<- calcPredictionAccuracy(rec_3, getData(split, "unknown"))
+HYBRID<- calcPredictionAccuracy(rec_4, getData(split, "unknown"))
+
+ALL <- rbind(RANDOM, POPULAR,UBCF,HYBRID)
+rownames(ALL) <- c("RANDOM", "POPULAR","UBCF","HYBRID")
+ALL <- as.data.frame(ALL)
+ALL$Accuracy <- 0
+for (i in 1:4){
+  ALL[i,4] <- (ALL[i,1] + ALL[i,4]) / (ALL[i,1]+ALL[i,2]+ALL[i,3]+ALL[i,4])
+}
+
+ALL
+```
+With a lower RMSE value and higher Accuracy, the 'best' model consider in this case is the **User-Based Collaborative Filtering** and the second is the **Hybrid Algorithm**. 
+</br>
+
+Also, to validate the performance in a more visual way, the **ROC Curves** of each one will be plotted using a common figure.
+```{r Evaluation, echo=TRUE, include=TRUE}
+#Evaluation plot
+algorithms <- list(
+  "Random" = list(name="RANDOM", param=NULL),
+  "Popular" = list(name="POPULAR", param=NULL),
+  "UBCF" = list(name="UBCF", param=list(method = "cosine", normalize = "Z-score", nn=25))
+  )
+
+results <- evaluate(split, algorithms, type = "topNList", n=c(1, 5, 10, 15, 20, 25))
+plot(results, annotate=c(1,2))
+```
+</br>
+Looking at the ROC Curve, again the considerer to be 'best' model is the UBCF with a curve closer to the left-hand border of the graph. 
+
+</br>
+
+## MVP and Example
+Even though the best fit was proved to be the UBCF model, the hybrid one was selected to create the functional MVP. 
+```{r MVP and Example, echo=TRUE, include=TRUE}
+#Global variable
+reccHybrid <- NA
+
+#Hybrid Recommendation System training
+trainMyAlgorithm <- function(data) {
+  recHybrid <<- HybridRecommender(
+    recRandom,
+    recPopularity,
+    recUBCF,
+    weights = c(0.3,0.4,0.3)
+  )
+}
+
+#The algorithm previously trained with a resulting top number of places recommended for a particular user 
+applyMyAlgorithm <- function(data, number) {
+  prediction <- predict(recHybrid, data, type="topNList",n=number)
+  return(as(prediction, "list"))
+}
+```
+</br>
+
+An example of the resulting top 5 restaurants to be recommend for user U1005 is shown below: 
+```{r}
+#Example for user U1005, top 5 restaurants to be recommend based on the hybrid recommendation system trained
+trainMyAlgorithm(restMatrix)
+p_topN <-applyMyAlgorithm(restMatrix[130],5)
+as(p_topN, "list")
+```
+
+## Conclusion & Future Improvements
+As the main purpose of this project, a functional MVP based on a use case with a recommendation system was presented, this was part of an application presented as business proposal where user experience and recommendation systems were together. 
+
+The MVP presented is very basic, it gives the top number (based on user preferences) of restaurants resulting from the Hybrid recommendation system that combines the result of three different algorithms such as Random, Popularity and User-Based Collaborative Filtering. This way, based on how popular or best ranked restaurants are and how places are rated by different users, few options with the best ratings are presented to a user so he or she could try one of those places.
+
+For future improvements, more specialized predictions could be made based on price preference or even location could be included in order to get more specific recommendations (filtering on the MVP). On the other hand, other algorithms such as Content-Bases, SVD, among others; could be tried to see if the resulting metric from the models improve. 
+</br>
+
+## References
+-	UCI Machine Learning (2018) Restaurant Data with Consumer Ratings. Available in: https://www.kaggle.com/uciml/restaurant-data-with-consumer-ratings
+
+-	Steeve Huang (2018) Introduction to Recommender System. Part 1 (Collaborative Filtering, Singular Value Decomposition). Available in: https://hackernoon.com/introduction-to-recommender-system-part-1-collaborative-filtering-singular-value-decomposition-44c9659c5e75 
+
+-	Li-Yen Hsu (2017) Recommender Systems for a Restaurant & Consumer Dataset. Available in: https://github.com/liyenhsu/restaurant-data-with-consumer-ratings 
+
+</br>
+
